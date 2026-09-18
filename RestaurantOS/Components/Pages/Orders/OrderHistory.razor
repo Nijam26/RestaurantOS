@@ -1,0 +1,58 @@
+@page "/orders"
+@attribute [Authorize]
+@using RestaurantOS.Services.Orders
+@using RestaurantOS.Models
+@inject IOrderService OrderService
+
+<div class="topbar">
+    <div>
+        <div class="page-eyebrow">Orders</div>
+        <div class="page-title">Order History</div>
+    </div>
+</div>
+
+<div class="card">
+    @if (!_orders.Any())
+    {
+        <p class="empty-state">No orders yet.</p>
+    }
+    else
+    {
+        <table class="data-table">
+            <thead>
+                <tr><th>Order #</th><th>Date</th><th>Table</th><th>Type</th><th>Items</th><th>Total</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var o in _orders)
+                {
+                    <tr>
+                        <td>@o.OrderNumber</td>
+                        <td>@o.CreatedAt.ToString("dd MMM, hh:mm tt")</td>
+                        <td>@(o.DiningTable?.Name ?? "—")</td>
+                        <td>@o.Type</td>
+                        <td>@o.Items.Sum(i => i.Quantity)</td>
+                        <td>৳@o.GrandTotal.ToString("N2")</td>
+                        <td><span class="badge @StatusBadge(o.Status)">@o.Status</span></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+@code {
+    private List<Order> _orders = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _orders = await OrderService.GetOrderHistoryAsync(DateTime.Today.AddDays(-30));
+    }
+
+    private string StatusBadge(OrderStatus status) => status switch
+    {
+        OrderStatus.Open => "badge-open",
+        OrderStatus.Completed => "badge-done",
+        OrderStatus.Cancelled => "badge-cancelled",
+        _ => "badge-progress"
+    };
+}

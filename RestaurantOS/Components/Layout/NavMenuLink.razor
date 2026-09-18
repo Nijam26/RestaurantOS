@@ -1,0 +1,17 @@
+@inject NavigationManager Navigation
+
+<a href="@Href" class="nav-link @(IsActive ? "active" : "")">
+    <span class="nav-icon">@Icon</span>
+    <span>@Text</span>
+</a>
+
+@code {
+    [Parameter] public string Href { get; set; } = "/";
+    [Parameter] public string Icon { get; set; } = "•";
+    [Parameter] public string Text { get; set; } = "";
+
+    private bool IsActive =>
+        Href == "/"
+            ? Navigation.ToBaseRelativePath(Navigation.Uri).TrimEnd('/') == ""
+            : Navigation.ToBaseRelativePath(Navigation.Uri).StartsWith(Href.TrimStart('/'), StringComparison.OrdinalIgnoreCase);
+}

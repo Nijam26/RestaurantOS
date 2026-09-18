@@ -1,0 +1,70 @@
+@page "/tables"
+@attribute [Authorize]
+@using Microsoft.EntityFrameworkCore
+@using RestaurantOS.Data
+@using RestaurantOS.Models
+@using RestaurantOS.Services.Orders
+@using RestaurantOS.Services.Auth
+@inject ApplicationDbContext Db
+@inject IOrderService OrderService
+@inject IAuthService AuthService
+@inject NavigationManager Navigation
+
+<div class="topbar">
+    <div>
+        <div class="page-eyebrow">Floor Plan</div>
+        <div class="page-title">Tables</div>
+    </div>
+</div>
+
+<div class="stat-grid" style="grid-template-columns:repeat(auto-fill,minmax(140px,1fr));">
+    @foreach (var t in _tables)
+    {
+        <div class="stat-card" style="cursor:pointer;" @onclick="() => OpenTable(t)">
+            <div class="stat-label">@t.Zone</div>
+            <div class="stat-value">@t.Name</div>
+            <div class="stat-delta" style="color:var(--text-muted);">Seats @t.Capacity</div>
+            <span class="badge @StatusBadge(t.Status)" style="margin-top:8px;">@t.Status</span>
+        </div>
+    }
+</div>
+
+@code {
+    private List<DiningTable> _tables = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _tables = await Db.DiningTables.OrderBy(t => t.Name).ToListAsync();
+    }
+
+    private async Task OpenTable(DiningTable table)
+    {
+        if (table.Status == TableStatus.Occupied)
+        {
+            var openOrder = await Db.Orders
+                .Where(o => o.DiningTableId == table.Id && o.Status != OrderStatus.Completed && o.Status != OrderStatus.Cancelled)
+                .OrderByDescending(o => o.CreatedAt)
+                .FirstOrDefaultAsync();
+
+            if (openOrder is not null)
+            {
+                Navigation.NavigateTo($"/pos?orderId={openOrder.Id}");
+                return;
+            }
+        }
+
+        var employee = await AuthService.GetCurrentEmployeeAsync();
+        if (employee is null) return;
+
+        var order = await OrderService.CreateOrderAsync(OrderType.DineIn, employee.Id, table.Id);
+        Navigation.NavigateTo($"/pos?orderId={order.Id}");
+    }
+
+    private string StatusBadge(TableStatus status) => status switch
+    {
+        TableStatus.Available => "badge-done",
+        TableStatus.Occupied => "badge-progress",
+        TableStatus.Reserved => "badge-open",
+        _ => "badge-cancelled"
+    };
+}

@@ -1,0 +1,203 @@
+@page "/pos"
+@attribute [Authorize]
+@using RestaurantOS.Services.Orders
+@using RestaurantOS.Services.Payments
+@using RestaurantOS.Services.Menu
+@using RestaurantOS.Services.Auth
+@using RestaurantOS.Services.Reports
+@using RestaurantOS.Models
+@inject IOrderService OrderService
+@inject IPaymentService PaymentService
+@inject IMenuService MenuService
+@inject IAuthService AuthService
+@inject IReportService ReportService
+@inject RestaurantOS.Services.Settings.ISettingsService SettingsService
+@inject IJSRuntime JS
+@inject NavigationManager Navigation
+
+<div class="topbar">
+    <div>
+        <div class="page-eyebrow">Point of Sale</div>
+        <div class="page-title">@(_order is null ? "New Order" : _order.OrderNumber)</div>
+    </div>
+    @if (_order is null)
+    {
+        <div style="display:flex;gap:10px;">
+            <button class="btn btn-ghost" @onclick='() => StartOrder(OrderType.TakeAway)'>Take Away</button>
+            <button class="btn btn-ghost" @onclick='() => StartOrder(OrderType.Delivery)'>Delivery</button>
+            <button class="btn btn-primary" @onclick='() => StartOrder(OrderType.DineIn)'>Dine In</button>
+        </div>
+    }
+</div>
+
+@if (_order is null)
+{
+    <div class="card empty-state">
+        <p>Select an order type above to start a new ticket, or open a table from the floor plan.</p>
+        <a href="/tables" class="btn btn-ghost" style="margin-top:10px;">Go to Tables →</a>
+    </div>
+}
+else
+{
+    <div class="pos-layout">
+        <div>
+            <div class="category-pill-row">
+                <div class="category-pill @(_activeCategory is null ? "active" : "")" @onclick="() => _activeCategory = null">All</div>
+                @foreach (var c in _categories)
+                {
+                    <div class="category-pill @(_activeCategory == c.Id ? "active" : "")" @onclick="() => _activeCategory = c.Id">
+                        @c.Icon @c.Name
+                    </div>
+                }
+            </div>
+
+            <div class="menu-grid">
+                @foreach (var item in VisibleItems)
+                {
+                    <button class="menu-tile @(item.IsAvailable ? "" : "unavailable")"
+                            disabled="@(!item.IsAvailable)"
+                            @onclick="() => AddItem(item)">
+                        <div class="name">@item.Name</div>
+                        <div class="price">৳@item.Price.ToString("N0")</div>
+                    </button>
+                }
+            </div>
+        </div>
+
+        <div class="cart-panel">
+            <h3>Order Summary</h3>
+            @if (!_order.Items.Any())
+            {
+                <p class="empty-state" style="padding:30px 10px;">Tap a menu item to add it here.</p>
+            }
+            else
+            {
+                @foreach (var line in _order.Items)
+                {
+                    <div class="cart-line">
+                        <div>
+                            <div style="font-weight:600;font-size:13.5px;">@line.MenuItem?.Name</div>
+                            <div style="font-size:12px;color:var(--text-muted);">৳@line.UnitPrice.ToString("N0") each</div>
+                        </div>
+                        <div class="qty-stepper">
+                            <button @onclick="() => ChangeQty(line, -1)">−</button>
+                            <span>@line.Quantity</span>
+                            <button @onclick="() => ChangeQty(line, 1)">+</button>
+                        </div>
+                    </div>
+                }
+
+                <div style="margin-top:16px;font-size:14px;">
+                    <div style="display:flex;justify-content:space-between;padding:4px 0;"><span>Subtotal</span><span>৳@_order.SubTotal.ToString("N2")</span></div>
+                    <div style="display:flex;justify-content:space-between;padding:4px 0;"><span>VAT (@_order.VatPercent%)</span><span>৳@_order.VatAmount.ToString("N2")</span></div>
+                    <div style="display:flex;justify-content:space-between;padding:8px 0;font-weight:800;font-size:17px;border-top:1.5px solid var(--border-soft);margin-top:6px;">
+                        <span>Total</span><span>৳@_order.GrandTotal.ToString("N2")</span>
+                    </div>
+                </div>
+
+                @if (!_checkoutOpen)
+                {
+                    <button class="btn btn-primary" style="width:100%;justify-content:center;margin-top:12px;" @onclick="() => _checkoutOpen = true">
+                        Charge ৳@_order.GrandTotal.ToString("N0")
+                    </button>
+                }
+                else
+                {
+                    <div class="field" style="margin-top:14px;">
+                        <label>Payment Method</label>
+                        <select class="input" @bind="_selectedMethod">
+                            <option value="@PaymentMethod.Cash">Cash</option>
+                            <option value="@PaymentMethod.Card">Card</option>
+                            <option value="@PaymentMethod.Bkash">bKash</option>
+                            <option value="@PaymentMethod.Nagad">Nagad</option>
+                            <option value="@PaymentMethod.Rocket">Rocket</option>
+                        </select>
+                    </div>
+                    @if (_selectedMethod is PaymentMethod.Bkash or PaymentMethod.Nagad or PaymentMethod.Rocket)
+                    {
+                        <div class="field">
+                            <label>Payer Number</label>
+                            <input class="input" @bind="_payerNumber" placeholder="01XXXXXXXXX" />
+                        </div>
+                    }
+                    <button class="btn btn-primary" style="width:100%;justify-content:center;" @onclick="CompletePayment">
+                        Confirm Payment
+                    </button>
+                    <button class="btn btn-ghost" style="width:100%;justify-content:center;margin-top:8px;" @onclick="() => _checkoutOpen = false">
+                        Cancel
+                    </button>
+                }
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [SupplyParameterFromQuery] public int? OrderId { get; set; }
+
+    private Order? _order;
+    private List<MenuCategory> _categories = new();
+    private int? _activeCategory;
+    private bool _checkoutOpen;
+    private PaymentMethod _selectedMethod = PaymentMethod.Cash;
+    private string _payerNumber = "";
+
+    private IEnumerable<MenuItem> VisibleItems =>
+        _categories
+            .Where(c => _activeCategory is null || c.Id == _activeCategory)
+            .SelectMany(c => c.Items);
+
+    protected override async Task OnInitializedAsync()
+    {
+        _categories = await MenuService.GetCategoriesWithItemsAsync();
+        if (OrderId is not null)
+            _order = await OrderService.GetOrderAsync(OrderId.Value);
+    }
+
+    private async Task StartOrder(OrderType type)
+    {
+        var employee = await AuthService.GetCurrentEmployeeAsync();
+        if (employee is null) return;
+        _order = await OrderService.CreateOrderAsync(type, employee.Id, null);
+    }
+
+    private async Task AddItem(MenuItem item)
+    {
+        if (_order is null) return;
+        await OrderService.AddItemAsync(_order.Id, item.Id, 1);
+        _order = await OrderService.GetOrderAsync(_order.Id);
+    }
+
+    private async Task ChangeQty(OrderItem line, int delta)
+    {
+        if (_order is null) return;
+        await OrderService.UpdateItemQuantityAsync(line.Id, line.Quantity + delta);
+        _order = await OrderService.GetOrderAsync(_order.Id);
+    }
+
+    private async Task CompletePayment()
+    {
+        if (_order is null) return;
+        var employee = await AuthService.GetCurrentEmployeeAsync();
+        if (employee is null) return;
+
+        await PaymentService.RecordPaymentAsync(_order.Id, _order.GrandTotal, _selectedMethod, employee.Id,
+            payerNumber: string.IsNullOrWhiteSpace(_payerNumber) ? null : _payerNumber);
+
+        await OrderService.CompleteOrderAsync(_order.Id);
+
+        var finalOrder = await OrderService.GetOrderAsync(_order.Id);
+        if (finalOrder is not null)
+        {
+            var settings = await SettingsService.GetAsync();
+            var pdfBytes = ReportService.GenerateReceipt(finalOrder, settings);
+            await JS.InvokeVoidAsync("downloadFileFromBase64",
+                $"receipt-{finalOrder.OrderNumber}.pdf", "application/pdf", Convert.ToBase64String(pdfBytes));
+        }
+
+        _order = null;
+        _checkoutOpen = false;
+        _payerNumber = "";
+        Navigation.NavigateTo("/", forceLoad: true);
+    }
+}

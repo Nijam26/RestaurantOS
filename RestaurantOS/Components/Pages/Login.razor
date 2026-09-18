@@ -1,0 +1,59 @@
+@page "/login"
+@using RestaurantOS.Services.Settings
+@inject ISettingsService SettingsService
+
+<div class="login-wrap">
+    <div class="login-visual">
+        <h1 style="font-size:38px;max-width:420px;line-height:1.15;">@_settings.RestaurantName</h1>
+        <p style="color:rgba(255,255,255,0.65);max-width:380px;font-size:15px;">
+            One system for the floor, the kitchen, and the books — orders, payments,
+            reports and staff, all in one place.
+        </p>
+    </div>
+    <div class="login-form-side">
+        <div class="login-card card">
+            <h2 style="font-size:24px;">Welcome back</h2>
+            <p style="color:var(--text-muted);font-size:13.5px;margin-bottom:22px;">Sign in to continue to the terminal.</p>
+
+            @if (!string.IsNullOrEmpty(_error))
+            {
+                <div class="alert alert-danger">@_error</div>
+            }
+
+            <form method="post" action="/account/login">
+                <input type="hidden" name="returnUrl" value="@ReturnUrl" />
+
+                <div class="field">
+                    <label>Username</label>
+                    <input class="input" name="username" placeholder="admin" />
+                </div>
+                <div class="field">
+                    <label>Password</label>
+                    <input type="password" class="input" name="password" placeholder="••••••••" />
+                </div>
+
+                <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;">
+                    Sign In
+                </button>
+            </form>
+
+            <p style="font-size:12px;color:var(--text-muted);margin-top:18px;">
+                Default admin: <strong>admin</strong> / <strong>Admin@123</strong>
+            </p>
+        </div>
+    </div>
+</div>
+
+@code {
+    [SupplyParameterFromQuery] private string? Error { get; set; }
+    [SupplyParameterFromQuery] private string? ReturnUrl { get; set; }
+
+    private string? _error;
+    private RestaurantOS.Models.RestaurantSettings _settings = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _settings = await SettingsService.GetAsync();
+        _error = Error;
+    }
+}

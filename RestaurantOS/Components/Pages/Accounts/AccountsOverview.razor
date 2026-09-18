@@ -1,0 +1,141 @@
+@page "/accounts"
+@attribute [Authorize]
+@using RestaurantOS.Services.Accounts
+@using RestaurantOS.Services.Auth
+@using RestaurantOS.Services.Reports
+@using RestaurantOS.Models
+@inject IAccountService AccountService
+@inject RestaurantOS.Services.Auth.IAuthService AuthService
+@inject IExcelExportService ExcelExportService
+@inject IJSRuntime JS
+
+<div class="topbar">
+    <div>
+        <div class="page-eyebrow">Insights</div>
+        <div class="page-title">Accounts</div>
+    </div>
+    <button class="btn btn-primary" @onclick="() => _showExpenseForm = true">+ Add Expense</button>
+</div>
+
+<div class="card" style="margin-bottom:18px;">
+    <div style="display:flex;gap:14px;align-items:end;flex-wrap:wrap;">
+        <div class="field" style="margin:0;"><label>From</label><input type="date" class="input" @bind="_from" /></div>
+        <div class="field" style="margin:0;"><label>To</label><input type="date" class="input" @bind="_to" /></div>
+        <button class="btn btn-dark" @onclick="Load">Run</button>
+    </div>
+</div>
+
+<div class="stat-grid">
+    <div class="stat-card"><div class="stat-label">Revenue</div><div class="stat-value">৳@_summary.TotalRevenue.ToString("N0")</div></div>
+    <div class="stat-card"><div class="stat-label">Expenses</div><div class="stat-value">৳@_summary.TotalExpenses.ToString("N0")</div></div>
+    <div class="stat-card">
+        <div class="stat-label">Net Profit</div>
+        <div class="stat-value">৳@_summary.NetProfit.ToString("N0")</div>
+        <div class="stat-delta @(_summary.NetProfit >= 0 ? "up" : "down")">@(_summary.NetProfit >= 0 ? "Profitable" : "Loss")</div>
+    </div>
+    <div class="stat-card"><div class="stat-label">VAT Collected</div><div class="stat-value">৳@_summary.TotalVatCollected.ToString("N0")</div></div>
+</div>
+
+<div class="card" style="margin-bottom:18px;">
+    <h3>Payment Method Breakdown</h3>
+    <table class="data-table">
+        <thead><tr><th>Method</th><th>Amount</th></tr></thead>
+        <tbody>
+            @foreach (var kv in _paymentBreakdown)
+            {
+                <tr><td>@kv.Key</td><td>৳@kv.Value.ToString("N2")</td></tr>
+            }
+        </tbody>
+    </table>
+</div>
+
+<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+        <h3>Expenses</h3>
+        <button class="btn btn-ghost btn-sm" @onclick="ExportExpenses">Export Excel</button>
+    </div>
+    <table class="data-table">
+        <thead><tr><th>Date</th><th>Category</th><th>Title</th><th>Amount</th><th></th></tr></thead>
+        <tbody>
+            @foreach (var e in _expenses)
+            {
+                <tr>
+                    <td>@e.Date.ToString("dd MMM yyyy")</td>
+                    <td>@e.Category</td>
+                    <td>@e.Title</td>
+                    <td>৳@e.Amount.ToString("N2")</td>
+                    <td><button class="btn btn-danger btn-sm" @onclick="() => DeleteExpense(e.Id)">Delete</button></td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</div>
+
+@if (_showExpenseForm)
+{
+    <div class="card" style="position:fixed;top:60px;right:38px;width:340px;z-index:20;">
+        <h3>New Expense</h3>
+        <div class="field"><label>Title</label><input class="input" @bind="_newExpense.Title" /></div>
+        <div class="field"><label>Amount (৳)</label><input type="number" class="input" @bind="_newExpense.Amount" /></div>
+        <div class="field">
+            <label>Category</label>
+            <select class="input" @bind="_newExpense.Category">
+                @foreach (var c in Enum.GetValues<ExpenseCategory>())
+                {
+                    <option value="@c">@c</option>
+                }
+            </select>
+        </div>
+        <div class="field"><label>Notes</label><textarea class="input" @bind="_newExpense.Notes"></textarea></div>
+        <div style="display:flex;gap:10px;">
+            <button class="btn btn-primary" @onclick="SaveExpense">Save</button>
+            <button class="btn btn-ghost" @onclick="() => _showExpenseForm = false">Cancel</button>
+        </div>
+    </div>
+}
+
+@code {
+    private DateTime _from = DateTime.Today.AddDays(-30);
+    private DateTime _to = DateTime.Today;
+    private AccountSummary _summary = new(0, 0, 0, 0, 0, 0);
+    private List<Expense> _expenses = new();
+    private Dictionary<PaymentMethod, decimal> _paymentBreakdown = new();
+
+    private bool _showExpenseForm;
+    private Expense _newExpense = new();
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load()
+    {
+        var toInclusive = _to.AddDays(1).AddTicks(-1);
+        _summary = await AccountService.GetSummaryAsync(_from, toInclusive);
+        _expenses = await AccountService.GetExpensesAsync(_from, toInclusive);
+        _paymentBreakdown = await AccountService.GetPaymentMethodBreakdownAsync(_from, toInclusive);
+    }
+
+    private async Task SaveExpense()
+    {
+        var employee = await AuthService.GetCurrentEmployeeAsync();
+        if (employee is null) return;
+        _newExpense.RecordedByEmployeeId = employee.Id;
+        await AccountService.AddExpenseAsync(_newExpense);
+        _newExpense = new Expense();
+        _showExpenseForm = false;
+        await Load();
+    }
+
+    private async Task DeleteExpense(int id)
+    {
+        await AccountService.DeleteExpenseAsync(id);
+        await Load();
+    }
+
+    private async Task ExportExpenses()
+    {
+        var bytes = ExcelExportService.ExportExpenses(_expenses);
+        var base64 = Convert.ToBase64String(bytes);
+        await JS.InvokeVoidAsync("downloadFileFromBase64", $"expenses-{_from:yyyyMMdd}-{_to:yyyyMMdd}.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", base64);
+    }
+}

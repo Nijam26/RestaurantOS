@@ -1,0 +1,133 @@
+@page "/staff"
+@attribute [Authorize]
+@using Microsoft.EntityFrameworkCore
+@using RestaurantOS.Data
+@using RestaurantOS.Models
+@inject ApplicationDbContext Db
+
+<div class="topbar">
+    <div>
+        <div class="page-eyebrow">Admin</div>
+        <div class="page-title">Staff & Roles</div>
+    </div>
+    <button class="btn btn-primary" @onclick="OpenNewStaffForm">+ New Staff</button>
+</div>
+
+<div class="card" style="margin-bottom:18px;">
+    <h3>Team</h3>
+    <table class="data-table">
+        <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Status</th><th>Last Login</th></tr></thead>
+        <tbody>
+            @foreach (var e in _employees)
+            {
+                <tr>
+                    <td>@e.FullName</td>
+                    <td>@e.Username</td>
+                    <td>@e.Role?.Name</td>
+                    <td><span class="badge @(e.IsActive ? "badge-done" : "badge-cancelled")">@(e.IsActive ? "Active" : "Disabled")</span></td>
+                    <td>@(e.LastLoginAt?.ToString("dd MMM, hh:mm tt") ?? "Never")</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</div>
+
+<div class="card">
+    <h3>Roles & Permissions</h3>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Permission</th>
+                @foreach (var r in _roles)
+                {
+                    <th>@r.Name</th>
+                }
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var perm in _permissions)
+            {
+                <tr>
+                    <td>@perm.DisplayName</td>
+                    @foreach (var r in _roles)
+                    {
+                        <td style="text-align:center;">
+                            @(r.RolePermissions.Any(rp => rp.PermissionId == perm.Id) ? "✅" : "—")
+                        </td>
+                    }
+                </tr>
+            }
+        </tbody>
+    </table>
+    <p style="font-size:12.5px;color:var(--text-muted);margin-top:10px;">
+        Permission matrix is seeded per role. Custom role editing can be wired to RolePermission CRUD as a next step.
+    </p>
+</div>
+
+@if (_showForm)
+{
+    <div class="card" style="position:fixed;top:60px;right:38px;width:360px;z-index:20;">
+        <h3>New Staff Member</h3>
+        <div class="field"><label>Full Name</label><input class="input" @bind="_newName" /></div>
+        <div class="field"><label>Username</label><input class="input" @bind="_newUsername" /></div>
+        <div class="field"><label>Temporary Password</label><input class="input" @bind="_newPassword" /></div>
+        <div class="field">
+            <label>Role</label>
+            <select class="input" @bind="_newRoleId">
+                @foreach (var r in _roles)
+                {
+                    <option value="@r.Id">@r.Name</option>
+                }
+            </select>
+        </div>
+        <div style="display:flex;gap:10px;">
+            <button class="btn btn-primary" @onclick="CreateStaff">Create</button>
+            <button class="btn btn-ghost" @onclick="() => _showForm = false">Cancel</button>
+        </div>
+    </div>
+}
+
+@code {
+    private List<Employee> _employees = new();
+    private List<Role> _roles = new();
+    private List<Permission> _permissions = new();
+
+    private bool _showForm;
+    private string _newName = "";
+    private string _newUsername = "";
+    private string _newPassword = "";
+    private int _newRoleId;
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load()
+    {
+        _employees = await Db.Employees.Include(e => e.Role).OrderBy(e => e.FullName).ToListAsync();
+        _roles = await Db.Roles.Include(r => r.RolePermissions).OrderBy(r => r.Name).ToListAsync();
+        _permissions = await Db.Permissions.OrderBy(p => p.Group).ThenBy(p => p.DisplayName).ToListAsync();
+    }
+
+    private void OpenNewStaffForm()
+    {
+        _newName = ""; _newUsername = ""; _newPassword = "";
+        _newRoleId = _roles.FirstOrDefault()?.Id ?? 0;
+        _showForm = true;
+    }
+
+    private async Task CreateStaff()
+    {
+        if (string.IsNullOrWhiteSpace(_newUsername) || string.IsNullOrWhiteSpace(_newPassword)) return;
+
+        Db.Employees.Add(new Employee
+        {
+            FullName = _newName,
+            Username = _newUsername,
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword(_newPassword),
+            RoleId = _newRoleId,
+            IsActive = true
+        });
+        await Db.SaveChangesAsync();
+        _showForm = false;
+        await Load();
+    }
+}

@@ -1,0 +1,119 @@
+@page "/menu-management"
+@attribute [Authorize]
+@using RestaurantOS.Services.Menu
+@using RestaurantOS.Models
+@inject IMenuService MenuService
+
+<div class="topbar">
+    <div>
+        <div class="page-eyebrow">Admin</div>
+        <div class="page-title">Menu Management</div>
+    </div>
+    <button class="btn btn-primary" @onclick="() => OpenItemForm(null)">+ New Item</button>
+</div>
+
+@foreach (var category in _categories)
+{
+    <div class="card" style="margin-bottom:18px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+            <h3>@category.Icon @category.Name</h3>
+            <button class="btn btn-ghost btn-sm" @onclick="() => OpenItemForm(category.Id)">+ Add item here</button>
+        </div>
+        <table class="data-table">
+            <thead><tr><th>Item</th><th>Price</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+                @foreach (var item in category.Items)
+                {
+                    <tr>
+                        <td>@item.Name @(item.IsVegetarian ? "🌱" : "") @(item.IsSpicy ? "🌶️" : "")</td>
+                        <td>৳@item.Price.ToString("N0")</td>
+                        <td>
+                            <span class="badge @(item.IsAvailable ? "badge-done" : "badge-cancelled")">
+                                @(item.IsAvailable ? "Available" : "86'd")
+                            </span>
+                        </td>
+                        <td style="display:flex;gap:6px;">
+                            <button class="btn btn-ghost btn-sm" @onclick="() => EditItem(item)">Edit</button>
+                            <button class="btn btn-ghost btn-sm" @onclick="() => ToggleAvailability(item)">Toggle</button>
+                            <button class="btn btn-danger btn-sm" @onclick="() => DeleteItem(item.Id)">Delete</button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@if (_showForm)
+{
+    <div class="card" style="position:fixed;top:60px;right:38px;width:360px;z-index:20;">
+        <h3>@(_editingItem.Id == 0 ? "New Menu Item" : "Edit Item")</h3>
+        <div class="field">
+            <label>Name</label>
+            <input class="input" @bind="_editingItem.Name" />
+        </div>
+        <div class="field">
+            <label>Price (৳)</label>
+            <input type="number" class="input" @bind="_editingItem.Price" />
+        </div>
+        <div class="field">
+            <label>Category</label>
+            <select class="input" @bind="_editingItem.MenuCategoryId">
+                @foreach (var c in _categories)
+                {
+                    <option value="@c.Id">@c.Name</option>
+                }
+            </select>
+        </div>
+        <div style="display:flex;gap:10px;">
+            <button class="btn btn-primary" @onclick="SaveItem">Save</button>
+            <button class="btn btn-ghost" @onclick="() => _showForm = false">Cancel</button>
+        </div>
+    </div>
+}
+
+@code {
+    private List<MenuCategory> _categories = new();
+    private bool _showForm;
+    private MenuItem _editingItem = new();
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load() => _categories = await MenuService.GetCategoriesWithItemsAsync();
+
+    private void OpenItemForm(int? categoryId)
+    {
+        _editingItem = new MenuItem { MenuCategoryId = categoryId ?? _categories.FirstOrDefault()?.Id ?? 0 };
+        _showForm = true;
+    }
+
+    private void EditItem(MenuItem item)
+    {
+        _editingItem = new MenuItem
+        {
+            Id = item.Id, Name = item.Name, Price = item.Price,
+            MenuCategoryId = item.MenuCategoryId, IsAvailable = item.IsAvailable,
+            IsVegetarian = item.IsVegetarian, IsSpicy = item.IsSpicy
+        };
+        _showForm = true;
+    }
+
+    private async Task SaveItem()
+    {
+        await MenuService.SaveItemAsync(_editingItem);
+        _showForm = false;
+        await Load();
+    }
+
+    private async Task ToggleAvailability(MenuItem item)
+    {
+        await MenuService.ToggleAvailabilityAsync(item.Id);
+        await Load();
+    }
+
+    private async Task DeleteItem(int id)
+    {
+        await MenuService.DeleteItemAsync(id);
+        await Load();
+    }
+}

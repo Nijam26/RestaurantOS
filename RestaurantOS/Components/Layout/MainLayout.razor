@@ -1,0 +1,76 @@
+@inherits LayoutComponentBase
+@using RestaurantOS.Services.Auth
+@using RestaurantOS.Services.Settings
+@inject IAuthService AuthService
+@inject ISettingsService SettingsService
+
+<AuthorizeView>
+    <Authorized>
+        <div class="app-shell">
+            <aside class="sidebar">
+                <div class="brand">
+                    <div class="brand-mark">@(_settings.RestaurantName.Length > 0 ? _settings.RestaurantName[0].ToString() : "R")</div>
+                    <div>
+                        <div class="brand-name">@_settings.RestaurantName</div>
+                        <div class="brand-sub">Restaurant OS</div>
+                    </div>
+                </div>
+
+                <div class="nav-group-label">Operations</div>
+                <NavMenuLink Href="/" Icon="📊" Text="Dashboard" />
+                <NavMenuLink Href="/pos" Icon="🧾" Text="POS Terminal" />
+                <NavMenuLink Href="/orders" Icon="📋" Text="Orders" />
+                <NavMenuLink Href="/tables" Icon="🍽️" Text="Tables" />
+
+                <div class="nav-group-label">Insights</div>
+                <NavMenuLink Href="/reports" Icon="📈" Text="Reports" />
+                <NavMenuLink Href="/accounts" Icon="💰" Text="Accounts" />
+
+                <div class="nav-group-label">Admin</div>
+                <NavMenuLink Href="/menu-management" Icon="🍛" Text="Menu" />
+                <NavMenuLink Href="/staff" Icon="👥" Text="Staff & Roles" />
+                <NavMenuLink Href="/settings" Icon="🎨" Text="Settings & UI" />
+
+                <div class="sidebar-footer">
+                    <div class="user-chip">
+                        <div class="avatar">@(_initials)</div>
+                        <div style="flex:1">
+                            <div style="font-size:13.5px;font-weight:600;color:white;">@_employeeName</div>
+                            <div style="font-size:11.5px;color:rgba(255,255,255,0.5);">@_roleName</div>
+                        </div>
+                        <form method="post" action="/account/logout" style="margin:0;">
+                            <button type="submit" class="btn btn-ghost btn-sm" style="color:white;border-color:rgba(255,255,255,0.2);">Exit</button>
+                        </form>
+                    </div>
+                </div>
+            </aside>
+
+            <main class="main-content">
+                @Body
+            </main>
+        </div>
+    </Authorized>
+    <NotAuthorized>
+        @Body
+    </NotAuthorized>
+</AuthorizeView>
+
+@code {
+    private RestaurantOS.Models.RestaurantSettings _settings = new();
+    private string _employeeName = "";
+    private string _roleName = "";
+    private string _initials = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        _settings = await SettingsService.GetAsync();
+        var employee = await AuthService.GetCurrentEmployeeAsync();
+        if (employee is not null)
+        {
+            _employeeName = employee.FullName;
+            _roleName = employee.Role?.Name ?? "";
+            _initials = string.Concat(employee.FullName.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .Take(2).Select(p => p[0])).ToUpper();
+        }
+    }
+}

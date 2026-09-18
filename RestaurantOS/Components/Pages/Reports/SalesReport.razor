@@ -1,0 +1,97 @@
+@page "/reports"
+@attribute [Authorize]
+@using RestaurantOS.Services.Orders
+@using RestaurantOS.Services.Reports
+@using RestaurantOS.Services.Settings
+@using RestaurantOS.Models
+@inject IOrderService OrderService
+@inject IReportService ReportService
+@inject IExcelExportService ExcelExportService
+@inject ISettingsService SettingsService
+@inject IJSRuntime JS
+
+<div class="topbar">
+    <div>
+        <div class="page-eyebrow">Insights</div>
+        <div class="page-title">Sales Reports</div>
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:18px;">
+    <div style="display:flex;gap:14px;align-items:end;flex-wrap:wrap;">
+        <div class="field" style="margin:0;">
+            <label>From</label>
+            <input type="date" class="input" @bind="_from" />
+        </div>
+        <div class="field" style="margin:0;">
+            <label>To</label>
+            <input type="date" class="input" @bind="_to" />
+        </div>
+        <button class="btn btn-dark" @onclick="Load">Run Report</button>
+        <button class="btn btn-primary" @onclick="ExportPdf">Export PDF</button>
+        <button class="btn btn-ghost" @onclick="ExportExcel">Export Excel</button>
+    </div>
+</div>
+
+@if (_orders is not null)
+{
+    var completed = _orders.Where(o => o.Status == OrderStatus.Completed).ToList();
+    <div class="stat-grid">
+        <div class="stat-card"><div class="stat-label">Orders</div><div class="stat-value">@completed.Count</div></div>
+        <div class="stat-card"><div class="stat-label">Revenue</div><div class="stat-value">৳@completed.Sum(o => o.GrandTotal).ToString("N0")</div></div>
+        <div class="stat-card"><div class="stat-label">VAT Collected</div><div class="stat-value">৳@completed.Sum(o => o.VatAmount).ToString("N0")</div></div>
+        <div class="stat-card"><div class="stat-label">Avg. Ticket</div><div class="stat-value">৳@(completed.Any() ? (completed.Average(o => o.GrandTotal)).ToString("N0") : "0")</div></div>
+    </div>
+
+    <div class="card">
+        <table class="data-table">
+            <thead><tr><th>Order #</th><th>Date</th><th>Type</th><th>Total</th></tr></thead>
+            <tbody>
+                @foreach (var o in completed.OrderByDescending(o => o.CreatedAt))
+                {
+                    <tr>
+                        <td>@o.OrderNumber</td>
+                        <td>@o.CreatedAt.ToString("dd MMM, hh:mm tt")</td>
+                        <td>@o.Type</td>
+                        <td>৳@o.GrandTotal.ToString("N2")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    private DateTime _from = DateTime.Today.AddDays(-7);
+    private DateTime _to = DateTime.Today;
+    private List<Order>? _orders;
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load()
+    {
+        _orders = await OrderService.GetOrderHistoryAsync(_from, _to.AddDays(1).AddTicks(-1));
+    }
+
+    private async Task ExportPdf()
+    {
+        if (_orders is null) return;
+        var settings = await SettingsService.GetAsync();
+        var bytes = ReportService.GenerateSalesReportPdf(_orders, _from, _to, settings);
+        await DownloadFile(bytes, $"sales-report-{_from:yyyyMMdd}-{_to:yyyyMMdd}.pdf", "application/pdf");
+    }
+
+    private async Task ExportExcel()
+    {
+        if (_orders is null) return;
+        var bytes = ExcelExportService.ExportSalesReport(_orders, _from, _to);
+        await DownloadFile(bytes, $"sales-report-{_from:yyyyMMdd}-{_to:yyyyMMdd}.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    }
+
+    private async Task DownloadFile(byte[] bytes, string fileName, string contentType)
+    {
+        var base64 = Convert.ToBase64String(bytes);
+        await JS.InvokeVoidAsync("downloadFileFromBase64", fileName, contentType, base64);
+    }
+}

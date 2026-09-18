@@ -1,0 +1,87 @@
+@page "/settings"
+@attribute [Authorize]
+@using RestaurantOS.Services.Settings
+@using RestaurantOS.Models
+@inject ISettingsService SettingsService
+@inject NavigationManager Navigation
+
+<div class="topbar">
+    <div>
+        <div class="page-eyebrow">Admin</div>
+        <div class="page-title">Settings & UI Customization</div>
+    </div>
+</div>
+
+@if (_saved)
+{
+    <div class="alert alert-success">Settings saved — reload to see theme changes everywhere.</div>
+}
+
+<div class="card" style="margin-bottom:18px;">
+    <h3>Branding</h3>
+    <div class="field"><label>Restaurant Name</label><input class="input" @bind="_settings.RestaurantName" /></div>
+    <div class="field"><label>Address</label><input class="input" @bind="_settings.Address" /></div>
+    <div class="field"><label>Phone</label><input class="input" @bind="_settings.Phone" /></div>
+    <div class="field"><label>Logo URL</label><input class="input" @bind="_settings.LogoUrl" placeholder="https://…" /></div>
+</div>
+
+<div class="card" style="margin-bottom:18px;">
+    <h3>Theme</h3>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;">
+        <div class="field">
+            <label>Primary Color</label>
+            <input type="color" class="input" style="height:44px;padding:4px;" @bind="_settings.PrimaryColor" />
+        </div>
+        <div class="field">
+            <label>Secondary Color</label>
+            <input type="color" class="input" style="height:44px;padding:4px;" @bind="_settings.SecondaryColor" />
+        </div>
+        <div class="field">
+            <label>Accent Color</label>
+            <input type="color" class="input" style="height:44px;padding:4px;" @bind="_settings.AccentColor" />
+        </div>
+    </div>
+    <div class="field">
+        <label>Dark Mode</label>
+        <select class="input" @bind="_darkModeStr">
+            <option value="false">Light</option>
+            <option value="true">Dark</option>
+        </select>
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:18px;">
+    <h3>Operations</h3>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <div class="field"><label>Default VAT %</label><input type="number" class="input" @bind="_settings.DefaultVatPercent" /></div>
+        <div class="field"><label>Default Service Charge %</label><input type="number" class="input" @bind="_settings.DefaultServiceChargePercent" /></div>
+        <div class="field"><label>Currency Symbol</label><input class="input" @bind="_settings.CurrencySymbol" /></div>
+        <div class="field"><label>Receipt Footer Note</label><input class="input" @bind="_settings.ReceiptFooterNote" /></div>
+    </div>
+</div>
+
+<button class="btn btn-primary" @onclick="Save">Save Settings</button>
+
+@code {
+    private RestaurantSettings _settings = new();
+    private bool _saved;
+
+    private string _darkModeStr
+    {
+        get => _settings.DarkMode.ToString().ToLower();
+        set => _settings.DarkMode = value == "true";
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _settings = await SettingsService.GetAsync();
+    }
+
+    private async Task Save()
+    {
+        await SettingsService.SaveAsync(_settings);
+        _saved = true;
+        await Task.Delay(1200);
+        Navigation.NavigateTo("/settings", forceLoad: true);
+    }
+}

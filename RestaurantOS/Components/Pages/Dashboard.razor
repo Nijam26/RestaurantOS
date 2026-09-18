@@ -1,0 +1,88 @@
+@page "/"
+@attribute [Authorize]
+@using RestaurantOS.Services.Orders
+@using RestaurantOS.Services.Accounts
+@using RestaurantOS.Models
+@inject IOrderService OrderService
+@inject IAccountService AccountService
+
+<div class="topbar">
+    <div>
+        <div class="page-eyebrow">Overview</div>
+        <div class="page-title">Today's Dashboard</div>
+    </div>
+    <a href="/pos" class="btn btn-primary">+ New Order</a>
+</div>
+
+<div class="stat-grid">
+    <div class="stat-card">
+        <div class="stat-label">Today's Revenue</div>
+        <div class="stat-value">৳@_summary.TotalRevenue.ToString("N0")</div>
+        <div class="stat-delta up">@_summary.OrderCount orders completed</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Open Orders</div>
+        <div class="stat-value">@_openOrders.Count</div>
+        <div class="stat-delta">across floor & takeaway</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">VAT Collected</div>
+        <div class="stat-value">৳@_summary.TotalVatCollected.ToString("N0")</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Today's Expenses</div>
+        <div class="stat-value">৳@_summary.TotalExpenses.ToString("N0")</div>
+        <div class="stat-delta @(_summary.NetProfit >= 0 ? "up" : "down")">
+            Net: ৳@_summary.NetProfit.ToString("N0")
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <h3>Open Orders</h3>
+    @if (!_openOrders.Any())
+    {
+        <p class="empty-state">No open orders right now. The floor is clear ✨</p>
+    }
+    else
+    {
+        <table class="data-table">
+            <thead>
+                <tr><th>Order #</th><th>Table</th><th>Type</th><th>Items</th><th>Status</th><th></th></tr>
+            </thead>
+            <tbody>
+                @foreach (var o in _openOrders)
+                {
+                    <tr>
+                        <td>@o.OrderNumber</td>
+                        <td>@(o.DiningTable?.Name ?? "—")</td>
+                        <td>@o.Type</td>
+                        <td>@o.Items.Sum(i => i.Quantity)</td>
+                        <td><span class="badge @StatusBadge(o.Status)">@o.Status</span></td>
+                        <td><a href="/pos?orderId=@o.Id" class="btn btn-ghost btn-sm">Open</a></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+@code {
+    private List<Order> _openOrders = new();
+    private AccountSummary _summary = new(0, 0, 0, 0, 0, 0);
+
+    protected override async Task OnInitializedAsync()
+    {
+        _openOrders = await OrderService.GetOpenOrdersAsync();
+        var today = DateTime.Today;
+        _summary = await AccountService.GetSummaryAsync(today, today.AddDays(1).AddTicks(-1));
+    }
+
+    private string StatusBadge(OrderStatus status) => status switch
+    {
+        OrderStatus.Open => "badge-open",
+        OrderStatus.Completed => "badge-done",
+        OrderStatus.Cancelled => "badge-cancelled",
+        _ => "badge-progress"
+    };
+}
