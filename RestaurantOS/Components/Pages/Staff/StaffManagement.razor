@@ -3,33 +3,92 @@
 @using Microsoft.EntityFrameworkCore
 @using RestaurantOS.Data
 @using RestaurantOS.Models
+@using RestaurantOS.Services.Auth
 @inject ApplicationDbContext Db
+@inject IAuthService AuthService
 
 <div class="topbar">
     <div>
         <div class="page-eyebrow">Admin</div>
         <div class="page-title">Staff & Roles</div>
     </div>
-    <button class="btn btn-primary" @onclick="OpenNewStaffForm">+ New Staff</button>
+    @if (_canManage)
+    {
+        <button class="btn btn-primary" @onclick="OpenNewStaffForm">+ New Staff</button>
+    }
 </div>
 
+@if (!string.IsNullOrEmpty(_message))
+{
+    <div class="alert @(_messageIsError ? "alert-danger" : "alert-success")" style="margin-bottom:18px;">@_message</div>
+}
+
 <div class="card" style="margin-bottom:18px;">
-    <h3>Team</h3>
+    <h3>Team (@_employees.Count)</h3>
     <table class="data-table">
-        <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Status</th><th>Last Login</th></tr></thead>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Username</th>
+                <th>Role</th>
+                <th>Status</th>
+                <th>Last Login</th>
+                @if (_canManage)
+                {
+                    <th></th>
+                }
+            </tr>
+        </thead>
         <tbody>
-            @foreach (var e in _employees)
+            @foreach (var emp in _employees)
             {
+                var isSelf = emp.Id == _currentEmployeeId;
                 <tr>
-                    <td>@e.FullName</td>
-                    <td>@e.Username</td>
-                    <td>@e.Role?.Name</td>
-                    <td><span class="badge @(e.IsActive ? "badge-done" : "badge-cancelled")">@(e.IsActive ? "Active" : "Disabled")</span></td>
-                    <td>@(e.LastLoginAt?.ToString("dd MMM, hh:mm tt") ?? "Never")</td>
+                    <td>
+                        @emp.FullName
+                        @if (isSelf)
+                        {
+                            <span class="badge badge-open" style="margin-left:6px;">You</span>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(emp.Phone) || !string.IsNullOrWhiteSpace(emp.Email))
+                        {
+                            <div style="font-size:12px;color:var(--text-muted);">
+                                @(string.Join(" | ", new[] { emp.Phone, emp.Email }.Where(x => !string.IsNullOrWhiteSpace(x))))
+                            </div>
+                        }
+                    </td>
+                    <td>@emp.Username</td>
+                    <td>@emp.Role?.Name</td>
+                    <td><span class="badge @(emp.IsActive ? "badge-done" : "badge-cancelled")">@(emp.IsActive ? "Active" : "Disabled")</span></td>
+                    <td>@(emp.LastLoginAt?.ToString("dd MMM, hh:mm tt") ?? "Never")</td>
+                    @if (_canManage)
+                    {
+                        <td>
+                            <div style="display:flex;gap:6px;justify-content:flex-end;">
+                                <button class="btn btn-ghost btn-sm" @onclick="() => OpenEditStaffForm(emp)">Edit</button>
+                                <button class="btn btn-ghost btn-sm" disabled="@isSelf"
+                                        title="@(isSelf ? "You can't change your own status" : "")"
+                                        @onclick="() => SetActiveAsync(emp, !emp.IsActive)">
+                                    @(emp.IsActive ? "Disable" : "Enable")
+                                </button>
+                                <button class="btn btn-danger btn-sm" disabled="@isSelf"
+                                        title="@(isSelf ? "You can't delete your own account" : "")"
+                                        @onclick="() => OpenDeleteConfirm(emp)">
+                                    Delete
+                                </button>
+                            </div>
+                        </td>
+                    }
                 </tr>
             }
         </tbody>
     </table>
+    @if (!_canManage)
+    {
+        <p style="font-size:12.5px;color:var(--text-muted);margin-top:10px;">
+            You have read-only access. Ask an admin for the "Manage Staff & Roles" permission to add or edit staff.
+        </p>
+    }
 </div>
 
 <div class="card">
@@ -64,70 +123,430 @@
     </p>
 </div>
 
+@* ---------- Add / Edit dialog ---------- *@
 @if (_showForm)
 {
-    <div class="card" style="position:fixed;top:60px;right:38px;width:360px;z-index:20;">
-        <h3>New Staff Member</h3>
-        <div class="field"><label>Full Name</label><input class="input" @bind="_newName" /></div>
-        <div class="field"><label>Username</label><input class="input" @bind="_newUsername" /></div>
-        <div class="field"><label>Temporary Password</label><input class="input" @bind="_newPassword" /></div>
-        <div class="field">
-            <label>Role</label>
-            <select class="input" @bind="_newRoleId">
-                @foreach (var r in _roles)
+    var isEdit = _form.Id != 0;
+    var editingSelf = isEdit && _form.Id == _currentEmployeeId;
+
+    <div class="modal-backdrop">
+        <div class="card modal-card">
+            <h3>@(isEdit ? "Edit Staff Member" : "New Staff Member")</h3>
+
+            @if (!string.IsNullOrEmpty(_formError))
+            {
+                <div class="alert alert-danger">@_formError</div>
+            }
+
+            <div class="field"><label>Full Name</label><input class="input" maxlength="80" @bind="_form.FullName" /></div>
+            <div class="field"><label>Username</label><input class="input" maxlength="40" autocomplete="off" @bind="_form.Username" /></div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div class="field"><label>Phone (optional)</label><input class="input" @bind="_form.Phone" /></div>
+                <div class="field"><label>Email (optional)</label><input class="input" type="email" @bind="_form.Email" /></div>
+            </div>
+
+            <div class="field">
+                <label>Role</label>
+                <select class="input" @bind="_form.RoleId" disabled="@editingSelf">
+                    @foreach (var r in _roles)
+                    {
+                        <option value="@r.Id">@r.Name</option>
+                    }
+                </select>
+            </div>
+
+            <div class="field">
+                <label style="display:flex;align-items:center;gap:8px;">
+                    <input type="checkbox" @bind="_form.IsActive" disabled="@editingSelf" />
+                    Account is active (can sign in)
+                </label>
+                @if (editingSelf)
                 {
-                    <option value="@r.Id">@r.Name</option>
+                    <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">
+                        You can't change your own role or status.
+                    </div>
                 }
-            </select>
+            </div>
+
+            <div class="field">
+                <label>@(isEdit ? "New Password (leave blank to keep current)" : "Temporary Password")</label>
+                <div style="display:flex;gap:8px;">
+                    <input class="input" type="@(_showPassword ? "text" : "password")" autocomplete="new-password" @bind="_form.Password" />
+                    <button type="button" class="btn btn-ghost btn-sm" @onclick="() => _showPassword = !_showPassword">
+                        @(_showPassword ? "Hide" : "Show")
+                    </button>
+                </div>
+                <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">At least @MinPasswordLength characters.</div>
+            </div>
+
+            <div style="display:flex;gap:10px;">
+                <button class="btn btn-primary" @onclick="SaveStaff">@(isEdit ? "Save Changes" : "Create")</button>
+                <button class="btn btn-ghost" @onclick="CloseForm">Cancel</button>
+            </div>
         </div>
-        <div style="display:flex;gap:10px;">
-            <button class="btn btn-primary" @onclick="CreateStaff">Create</button>
-            <button class="btn btn-ghost" @onclick="() => _showForm = false">Cancel</button>
+    </div>
+}
+
+@* ---------- Delete confirmation dialog ---------- *@
+@if (_deleteTarget is not null)
+{
+    <div class="modal-backdrop">
+        <div class="card modal-card">
+            @if (_deleteBlockReason is null)
+            {
+                <h3>Delete @_deleteTarget.FullName?</h3>
+                <p style="font-size:14px;color:var(--text-muted);margin-bottom:18px;">
+                    This permanently removes the account <strong>@_deleteTarget.Username</strong>. This can't be undone.
+                </p>
+                <div style="display:flex;gap:10px;">
+                    <button class="btn btn-danger" @onclick="ConfirmDelete">Delete</button>
+                    <button class="btn btn-ghost" @onclick="CancelDelete">Cancel</button>
+                </div>
+            }
+            else
+            {
+                <h3>Can't delete @_deleteTarget.FullName</h3>
+                <div class="alert alert-danger">@_deleteBlockReason</div>
+                <div style="display:flex;gap:10px;">
+                    @if (_deleteOfferDisable)
+                    {
+                        <button class="btn btn-primary" @onclick="DisableInstead">Disable Instead</button>
+                    }
+                    <button class="btn btn-ghost" @onclick="CancelDelete">Close</button>
+                </div>
+            }
         </div>
     </div>
 }
 
 @code {
+    private const string ManagePermission = "staff.manage";
+    private const int MinPasswordLength = 6;
+
+    private class StaffForm
+    {
+        public int Id { get; set; }
+        public string FullName { get; set; } = "";
+        public string Username { get; set; } = "";
+        public string Phone { get; set; } = "";
+        public string Email { get; set; } = "";
+        public int RoleId { get; set; }
+        public bool IsActive { get; set; } = true;
+        public string Password { get; set; } = "";
+    }
+
     private List<Employee> _employees = new();
     private List<Role> _roles = new();
     private List<Permission> _permissions = new();
 
-    private bool _showForm;
-    private string _newName = "";
-    private string _newUsername = "";
-    private string _newPassword = "";
-    private int _newRoleId;
+    private bool _canManage;
+    private int _currentEmployeeId;
+    private int _managePermissionId;
 
-    protected override async Task OnInitializedAsync() => await Load();
+    private string? _message;
+    private bool _messageIsError;
+
+    private bool _showForm;
+    private bool _showPassword;
+    private string? _formError;
+    private StaffForm _form = new();
+
+    private Employee? _deleteTarget;
+    private string? _deleteBlockReason;
+    private bool _deleteOfferDisable;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _canManage = await AuthService.HasPermissionAsync(ManagePermission);
+        _currentEmployeeId = (await AuthService.GetCurrentEmployeeAsync())?.Id ?? 0;
+        await Load();
+    }
 
     private async Task Load()
     {
-        _employees = await Db.Employees.Include(e => e.Role).OrderBy(e => e.FullName).ToListAsync();
-        _roles = await Db.Roles.Include(r => r.RolePermissions).OrderBy(r => r.Name).ToListAsync();
-        _permissions = await Db.Permissions.OrderBy(p => p.Group).ThenBy(p => p.DisplayName).ToListAsync();
+        // Start from a clean tracker and read without tracking so the lists
+        // always show what's really in the database (this component holds one
+        // DbContext for the life of the circuit).
+        Db.ChangeTracker.Clear();
+        _employees = await Db.Employees.AsNoTracking().Include(e => e.Role).OrderBy(e => e.FullName).ToListAsync();
+        _roles = await Db.Roles.AsNoTracking().Include(r => r.RolePermissions).OrderBy(r => r.Name).ToListAsync();
+        _permissions = await Db.Permissions.AsNoTracking().OrderBy(p => p.Group).ThenBy(p => p.DisplayName).ToListAsync();
+        _managePermissionId = _permissions.FirstOrDefault(p => p.Key == ManagePermission)?.Id ?? 0;
     }
+
+    private void Notify(string text, bool isError = false)
+    {
+        _message = text;
+        _messageIsError = isError;
+    }
+
+    private bool EnsureCanManage()
+    {
+        if (_canManage) return true;
+        Notify("You don't have permission to manage staff.", true);
+        return false;
+    }
+
+    // ---- "Can this account manage staff?" helpers (used to avoid a lock-out) ----
+
+    private bool RoleCanManage(int roleId) =>
+        _roles.FirstOrDefault(r => r.Id == roleId)?.RolePermissions.Any(rp => rp.PermissionId == _managePermissionId) == true;
+
+    private async Task<bool> OtherManagerExistsAsync(int excludeEmployeeId) =>
+        await Db.Employees.AnyAsync(x => x.Id != excludeEmployeeId && x.IsActive &&
+            x.Role!.RolePermissions.Any(rp => rp.Permission!.Key == ManagePermission));
+
+    // ---- Add / Edit ----
 
     private void OpenNewStaffForm()
     {
-        _newName = ""; _newUsername = ""; _newPassword = "";
-        _newRoleId = _roles.FirstOrDefault()?.Id ?? 0;
+        if (!EnsureCanManage()) return;
+        _message = null;
+        _formError = null;
+        _showPassword = false;
+
+        // Default to the role with the fewest permissions (least privilege).
+        var defaultRole = _roles.OrderBy(r => r.RolePermissions.Count).FirstOrDefault();
+        _form = new StaffForm { RoleId = defaultRole?.Id ?? 0 };
         _showForm = true;
     }
 
-    private async Task CreateStaff()
+    private void OpenEditStaffForm(Employee emp)
     {
-        if (string.IsNullOrWhiteSpace(_newUsername) || string.IsNullOrWhiteSpace(_newPassword)) return;
+        if (!EnsureCanManage()) return;
+        _message = null;
+        _formError = null;
+        _showPassword = false;
 
-        Db.Employees.Add(new Employee
+        _form = new StaffForm
         {
-            FullName = _newName,
-            Username = _newUsername,
-            PasswordHash = BCrypt.Net.BCrypt.HashPassword(_newPassword),
-            RoleId = _newRoleId,
-            IsActive = true
-        });
-        await Db.SaveChangesAsync();
+            Id = emp.Id,
+            FullName = emp.FullName,
+            Username = emp.Username,
+            Phone = emp.Phone ?? "",
+            Email = emp.Email ?? "",
+            RoleId = emp.RoleId,
+            IsActive = emp.IsActive
+        };
+        _showForm = true;
+    }
+
+    private void CloseForm() => _showForm = false;
+
+    private async Task SaveStaff()
+    {
+        if (!EnsureCanManage()) { _showForm = false; return; }
+        _formError = null;
+
+        var isEdit = _form.Id != 0;
+        var name = (_form.FullName ?? "").Trim();
+        var username = (_form.Username ?? "").Trim();
+        var phone = (_form.Phone ?? "").Trim();
+        var email = (_form.Email ?? "").Trim();
+        var password = _form.Password ?? "";
+
+        if (name.Length == 0) { _formError = "Full name is required."; return; }
+        if (username.Length == 0) { _formError = "Username is required."; return; }
+        if (username.Any(char.IsWhiteSpace)) { _formError = "Username can't contain spaces."; return; }
+        if (name.Length > 80) { _formError = "Full name can be at most 80 characters."; return; }
+        if (username.Length > 40) { _formError = "Username can be at most 40 characters."; return; }
+        if (email.Length > 0 && !new System.ComponentModel.DataAnnotations.EmailAddressAttribute().IsValid(email))
+        { _formError = "Please enter a valid email address."; return; }
+        if (!_roles.Any(r => r.Id == _form.RoleId)) { _formError = "Please choose a role."; return; }
+
+        if (!isEdit && password.Length < MinPasswordLength)
+        { _formError = $"Password must be at least {MinPasswordLength} characters."; return; }
+        if (isEdit && password.Length > 0 && password.Length < MinPasswordLength)
+        { _formError = $"New password must be at least {MinPasswordLength} characters."; return; }
+
+        var formId = _form.Id;
+        if (await Db.Employees.AnyAsync(x => x.Username == username && x.Id != formId))
+        { _formError = "That username is already taken."; return; }
+
+        Db.ChangeTracker.Clear();
+
+        if (isEdit)
+        {
+            var emp = await Db.Employees.FirstOrDefaultAsync(x => x.Id == _form.Id);
+            if (emp is null)
+            {
+                _showForm = false;
+                Notify("That staff member no longer exists.", true);
+                await Load();
+                return;
+            }
+
+            // Your own role/status can't be changed from here (prevents locking yourself out).
+            var isSelf = emp.Id == _currentEmployeeId;
+            var newRoleId = isSelf ? emp.RoleId : _form.RoleId;
+            var newActive = isSelf ? emp.IsActive : _form.IsActive;
+
+            // Never leave the system without an active account that can manage staff.
+            var wasManager = emp.IsActive && RoleCanManage(emp.RoleId);
+            var staysManager = newActive && RoleCanManage(newRoleId);
+            if (wasManager && !staysManager && !await OtherManagerExistsAsync(emp.Id))
+            {
+                _formError = "At least one active account must keep the \"Manage Staff & Roles\" permission.";
+                return;
+            }
+
+            emp.FullName = name;
+            emp.Username = username;
+            emp.Phone = phone.Length == 0 ? null : phone;
+            emp.Email = email.Length == 0 ? null : email;
+            emp.RoleId = newRoleId;
+            emp.IsActive = newActive;
+            if (password.Length > 0)
+                emp.PasswordHash = BCrypt.Net.BCrypt.HashPassword(password);
+        }
+        else
+        {
+            Db.Employees.Add(new Employee
+            {
+                FullName = name,
+                Username = username,
+                Phone = phone.Length == 0 ? null : phone,
+                Email = email.Length == 0 ? null : email,
+                PasswordHash = BCrypt.Net.BCrypt.HashPassword(password),
+                RoleId = _form.RoleId,
+                IsActive = _form.IsActive
+            });
+        }
+
+        try
+        {
+            await Db.SaveChangesAsync();
+        }
+        catch (DbUpdateException)
+        {
+            Db.ChangeTracker.Clear();
+            _formError = "Couldn't save. The username may already be in use - please try again.";
+            return;
+        }
+
         _showForm = false;
+        Notify(isEdit ? $"{name} was updated." : $"{name} was added.");
         await Load();
     }
+
+    // ---- Enable / Disable ----
+
+    private async Task SetActiveAsync(Employee emp, bool active)
+    {
+        if (!EnsureCanManage()) return;
+        if (emp.Id == _currentEmployeeId)
+        {
+            Notify("You can't change the status of your own account.", true);
+            return;
+        }
+
+        Db.ChangeTracker.Clear();
+        var target = await Db.Employees.FirstOrDefaultAsync(x => x.Id == emp.Id);
+        if (target is null)
+        {
+            Notify("That staff member no longer exists.", true);
+            await Load();
+            return;
+        }
+
+        if (!active && target.IsActive && RoleCanManage(target.RoleId) && !await OtherManagerExistsAsync(target.Id))
+        {
+            Notify("This is the last active account that can manage staff & roles, so it can't be disabled.", true);
+            return;
+        }
+
+        target.IsActive = active;
+        await Db.SaveChangesAsync();
+
+        var state = active ? "enabled" : "disabled";
+        Notify($"{target.FullName} was {state}.");
+        await Load();
+    }
+
+    // ---- Delete ----
+
+    private async Task OpenDeleteConfirm(Employee emp)
+    {
+        if (!EnsureCanManage()) return;
+        _message = null;
+        _deleteTarget = emp;
+        await PrepareDeleteAsync(emp);
+    }
+
+    // Works out whether the delete is allowed. Accounts with order, payment or
+    // expense history can't be deleted (those tables reference the employee with
+    // DeleteBehavior.Restrict) - they should be disabled instead.
+    private async Task PrepareDeleteAsync(Employee emp)
+    {
+        _deleteBlockReason = null;
+        _deleteOfferDisable = false;
+
+        if (emp.Id == _currentEmployeeId)
+        {
+            _deleteBlockReason = "You can't delete your own account.";
+            return;
+        }
+
+        var hasHistory = await Db.Orders.AnyAsync(o => o.EmployeeId == emp.Id)
+            || await Db.Payments.AnyAsync(p => p.ReceivedByEmployeeId == emp.Id)
+            || await Db.Expenses.AnyAsync(x => x.RecordedByEmployeeId == emp.Id);
+
+        if (hasHistory)
+        {
+            _deleteBlockReason = $"{emp.FullName} has orders, payments or expenses on record, so the account can't be deleted without breaking those records. "
+                + "Disable the account instead - they won't be able to sign in and the history stays intact.";
+            _deleteOfferDisable = emp.IsActive;
+            return;
+        }
+
+        if (emp.IsActive && RoleCanManage(emp.RoleId) && !await OtherManagerExistsAsync(emp.Id))
+        {
+            _deleteBlockReason = "This is the last active account that can manage staff & roles. Give another account that permission first.";
+        }
+    }
+
+    private async Task ConfirmDelete()
+    {
+        if (_deleteTarget is null || !EnsureCanManage()) return;
+
+        // Re-check: things may have changed since the dialog was opened.
+        await PrepareDeleteAsync(_deleteTarget);
+        if (_deleteBlockReason is not null) return;
+
+        var id = _deleteTarget.Id;
+        var name = _deleteTarget.FullName;
+
+        Db.ChangeTracker.Clear();
+        var target = await Db.Employees.FirstOrDefaultAsync(x => x.Id == id);
+        if (target is not null)
+        {
+            Db.Employees.Remove(target);
+            try
+            {
+                await Db.SaveChangesAsync();
+            }
+            catch (DbUpdateException)
+            {
+                Db.ChangeTracker.Clear();
+                _deleteBlockReason = "This account is still linked to other records and couldn't be deleted. Disable it instead.";
+                _deleteOfferDisable = _deleteTarget.IsActive;
+                return;
+            }
+        }
+
+        _deleteTarget = null;
+        Notify($"{name} was deleted.");
+        await Load();
+    }
+
+    private async Task DisableInstead()
+    {
+        if (_deleteTarget is null) return;
+        var target = _deleteTarget;
+        _deleteTarget = null;
+        await SetActiveAsync(target, false);
+    }
+
+    private void CancelDelete() => _deleteTarget = null;
 }
